@@ -20,6 +20,9 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - name: Configurar el SDK de Android
+        uses: android-actions/setup-android@v3
+
       - name: Asegurar paquetes del SDK de Android
         run: |
           yes | sdkmanager --licenses > /dev/null || true
