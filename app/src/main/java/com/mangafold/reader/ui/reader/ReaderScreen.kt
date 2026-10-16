@@ -32,11 +32,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import coil.compose.AsyncImage
 import com.mangafold.reader.data.Manga
 import com.mangafold.reader.data.PageSource
 import me.saket.telephoto.zoomable.coil.ZoomableAsyncImage
@@ -161,20 +163,11 @@ private fun MangaPager(pages: List<PageSource>, isSpread: Boolean, reverseDirect
             onPageChange = { groupIndex = it },
             modifier = Modifier.fillMaxSize(),
             reverseDirection = reverseDirection,
+            turningPageContent = { index ->
+                GroupContent(index, groups, isSpread, reverseDirection, zoomable = false)
+            },
         ) { index ->
-            val group = groups.getOrNull(index).orEmpty()
-            if (isSpread) {
-                // En lectura derecha→izquierda el spread también se invierte:
-                // la página más adelantada va a la izquierda.
-                val left = if (reverseDirection) group.getOrNull(1) else group.getOrNull(0)
-                val right = if (reverseDirection) group.getOrNull(0) else group.getOrNull(1)
-                Row(Modifier.fillMaxSize()) {
-                    PageImage(left, Modifier.weight(1f).fillMaxHeight())
-                    PageImage(right, Modifier.weight(1f).fillMaxHeight())
-                }
-            } else {
-                PageImage(group.getOrNull(0), Modifier.fillMaxSize())
-            }
+            GroupContent(index, groups, isSpread, reverseDirection, zoomable = true)
         }
 
         Text(
@@ -189,14 +182,49 @@ private fun MangaPager(pages: List<PageSource>, isSpread: Boolean, reverseDirect
 }
 
 @Composable
-private fun PageImage(page: PageSource?, modifier: Modifier) {
+private fun GroupContent(
+    index: Int,
+    groups: List<List<PageSource>>,
+    isSpread: Boolean,
+    reverseDirection: Boolean,
+    zoomable: Boolean,
+) {
+    val group = groups.getOrNull(index).orEmpty()
+    if (isSpread) {
+        // En lectura derecha→izquierda el spread también se invierte: la
+        // página más adelantada va a la izquierda.
+        val left = if (reverseDirection) group.getOrNull(1) else group.getOrNull(0)
+        val right = if (reverseDirection) group.getOrNull(0) else group.getOrNull(1)
+        Row(Modifier.fillMaxSize()) {
+            PageImage(left, Modifier.weight(1f).fillMaxHeight(), zoomable)
+            PageImage(right, Modifier.weight(1f).fillMaxHeight(), zoomable)
+        }
+    } else {
+        PageImage(group.getOrNull(0), Modifier.fillMaxSize(), zoomable)
+    }
+}
+
+@Composable
+private fun PageImage(page: PageSource?, modifier: Modifier, zoomable: Boolean = true) {
     if (page == null) {
         Box(modifier.background(Color.Black))
         return
     }
-    ZoomableAsyncImage(
-        model = page.model,
-        contentDescription = null,
-        modifier = modifier.fillMaxWidth(),
-    )
+    if (zoomable) {
+        ZoomableAsyncImage(
+            model = page.model,
+            contentDescription = null,
+            modifier = modifier.fillMaxWidth(),
+        )
+    } else {
+        // Versión barata (sin gestos de zoom/pan) para cuando esta imagen se
+        // instancia muchas veces por segundo durante la animación de pasar
+        // página.
+        AsyncImage(
+            model = page.model,
+            contentDescription = null,
+            contentScale = ContentScale.Fit,
+            modifier = modifier.fillMaxWidth(),
+        )
+    }
 }

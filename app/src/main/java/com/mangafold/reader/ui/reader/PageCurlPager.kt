@@ -1,19 +1,25 @@
 package com.mangafold.reader.ui.reader
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
@@ -21,19 +27,26 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
-import kotlin.math.absoluteValue
+import kotlin.math.cos
+import kotlin.math.roundToInt
+
+private const val STRIP_COUNT = 10
+private const val MAX_CURL_ANGLE_DEG = 100f
 
 /**
- * Pager que simula una hoja de papel pasando de página, al estilo de un libro
- * físico: la página activa gira en el eje Y desde el borde que se está
- * arrastrando, con una sombra dinámica en el pliegue y la hoja de debajo
- * asomando. No es un modelo físico de papel, pero da la sensación de "hoja"
- * en vez de un simple deslizamiento plano.
+ * Pager que simula una hoja de papel real pasando de página: el pliegue
+ * aparece justo donde pones el dedo (no hace falta arrancar desde la
+ * esquina) y la parte que se despega se dibuja como una banda de tiras
+ * verticales con rotación y compresión graduales, imitando la curvatura de
+ * un cilindro de papel en vez de un simple giro plano.
  *
- * Tanto arrastrar como tocar el borde izquierdo/derecho disparan la misma
- * animación: el toque simplemente anima el progreso completo de una vez.
+ * `t` (0..1, 0 = plana / 1 = pasada del todo) es la ÚNICA fuente de verdad
+ * del render, tanto en el arrastre en vivo como en el acabado animado: así
+ * no hay un cambio brusco de variable al soltar el dedo que produzca un
+ * parpadeo.
  */
 @Composable
 fun PageCurlPager(
@@ -42,104 +55,183 @@ fun PageCurlPager(
     onPageChange: (Int) -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
-    /** true = lectura derecha→izquierda (manga clásico): deslizar/tocar a la derecha avanza. */
+    /** true = lectura derecha→izquierda (manga clásico): el lado derecho retrocede. */
     reverseDirection: Boolean = false,
+    /**
+     * Versión ligera (sin zoom/pan) usada mientras la página se está
+     * animando: se instancia muchas veces por segundo (una por tira de la
+     * curvatura), así que debe ser barata. Si se omite, se reusa [pageContent].
+     */
+    turningPageContent: (@Composable (pageIndex: Int) -> Unit)? = null,
     pageContent: @Composable (pageIndex: Int) -> Unit,
 ) {
+    val turning = turningPageContent ?: pageContent
     val scope = rememberCoroutineScope()
     val density = LocalDensity.current
 
-    // progress > 0  -> volviendo a la página anterior
-    // progress < 0  -> avanzando a la siguiente página
-    var progress by remember { mutableFloatStateOf(0f) }
     var widthPx by remember { mutableFloatStateOf(1f) }
-    var dragging by remember { mutableStateOf(false) }
+    // +1 = avanzando a la siguiente página, -1 = volviendo a la anterior, 0 = en reposo.
+    var direction by remember { mutableIntStateOf(0) }
+    // Última fracción (0f..1f) del dedo conocida de forma síncrona; se usa
+    // para decidir al soltar, sin depender de que la animación ya haya
+    // procesado el último snapTo.
+    var lastTouchFraction by remember { mutableFloatStateOf(0f) }
 
-    val animatable = remember { androidx.compose.animation.core.Animatable(0f) }
+    val t = remember { Animatable(0f) }
 
-    LaunchedEffect(progress, dragging) {
-        if (!dragging) {
-            animatable.snapTo(progress)
+    fun foldFractionFor(forward: Boolean, tValue: Float) =
+        if (forward) 1f - tValue else tValue
+
+    fun tFor(forward: Boolean, foldFraction: Float) =
+        if (forward) 1f - foldFraction else foldFraction
+
+    suspend fun commitTurn(forward: Boolean) {
+        val target = if (forward) currentPage + 1 else currentPage - 1
+        if (target !in 0 until pageCount) {
+            t.animateTo(0f, tween(180))
+            direction = 0
+            return
         }
+        t.animateTo(1f, tween(220))
+        onPageChange(target)
+        t.snapTo(0f)
+        direction = 0
     }
 
-    suspend fun goNext() {
-        if (currentPage >= pageCount - 1) return
-        animatable.animateTo(-1f, tween(220))
-        onPageChange(currentPage + 1)
-        progress = 0f
-        animatable.snapTo(0f)
+    suspend fun cancelTurn() {
+        t.animateTo(0f, tween(180))
+        direction = 0
     }
 
-    suspend fun goPrevious() {
-        if (currentPage <= 0) return
-        animatable.animateTo(1f, tween(220))
-        onPageChange(currentPage - 1)
-        progress = 0f
-        animatable.snapTo(0f)
-    }
-
-    suspend fun settleDrag() {
-        val threshold = 0.35f
-        when {
-            progress <= -threshold && currentPage < pageCount - 1 -> goNext()
-            progress >= threshold && currentPage > 0 -> goPrevious()
-            else -> {
-                animatable.animateTo(0f, tween(220))
-                progress = 0f
-            }
-        }
+    suspend fun animatedTurn(forward: Boolean) {
+        if ((forward && currentPage >= pageCount - 1) || (!forward && currentPage <= 0)) return
+        direction = if (forward) 1 else -1
+        t.snapTo(0f)
+        commitTurn(forward)
     }
 
     Box(modifier = modifier.fillMaxSize()) {
-        val animatedProgress = if (dragging) progress else animatable.value
+        val isForward = direction == 1
+        val foldFraction = if (direction == 0) 1f else foldFractionFor(isForward, t.value)
 
-        // Página de abajo: la que se va a revelar (siguiente si se avanza,
-        // anterior si se retrocede). Se dibuja estática debajo.
-        val revealIndex = when {
-            animatedProgress < 0f -> currentPage + 1
-            animatedProgress > 0f -> currentPage - 1
-            else -> null
-        }
-        if (revealIndex != null && revealIndex in 0 until pageCount) {
-            Box(Modifier.fillMaxSize()) { pageContent(revealIndex) }
-        }
+        if (direction != 0) {
+            val targetIndex = if (isForward) currentPage + 1 else currentPage - 1
 
-        // Página activa, con el efecto de hoja curvándose sobre el eje Y.
-        val rotation = animatedProgress * -150f
-        val pivotFraction = if (animatedProgress <= 0f) 0f else 1f
-        val shadowAlpha = animatedProgress.absoluteValue * 0.6f
+            // Página de destino, a pantalla completa debajo de todo: se va
+            // revelando a medida que las tiras de arriba se comprimen.
+            if (targetIndex in 0 until pageCount) {
+                Box(Modifier.fillMaxSize()) { turning(targetIndex) }
+            }
 
-        Box(
-            Modifier
-                .fillMaxSize()
-                .graphicsLayer {
-                    cameraDistance = 24f * density.density
-                    rotationY = rotation
-                    transformOrigin = TransformOrigin(pivotFraction, 0.5f)
-                }
-                .drawWithContent {
-                    drawContent()
-                    if (shadowAlpha > 0f) {
-                        val fromLeft = animatedProgress < 0f
-                        val brush = Brush.horizontalGradient(
-                            colors = listOf(
-                                Color.Black.copy(alpha = shadowAlpha),
-                                Color.Transparent,
-                            ),
-                            startX = if (fromLeft) size.width else 0f,
-                            endX = if (fromLeft) size.width * 0.55f else size.width * 0.45f,
-                        )
-                        drawRect(brush)
+            val foldPx = widthPx * foldFraction
+
+            // Parte de la página actual que sigue plana (todavía no se dobló).
+            val flatWidthPx = if (isForward) foldPx else widthPx - foldPx
+            if (flatWidthPx > 0.5f) {
+                val flatStartPx = if (isForward) 0f else foldPx
+                Box(
+                    Modifier
+                        .fillMaxHeight()
+                        .width(with(density) { flatWidthPx.toDp() })
+                        .offset(x = with(density) { flatStartPx.toDp() })
+                        .clipToBounds(),
+                ) {
+                    Box(
+                        Modifier
+                            .fillMaxHeight()
+                            .width(with(density) { widthPx.toDp() })
+                            .offset { IntOffset(-flatStartPx.roundToInt(), 0) },
+                    ) {
+                        turning(currentPage)
                     }
-                },
-        ) {
+                }
+            }
+
+            // Banda que se está curvando: tiras finas con rotación y
+            // compresión graduales, para que se vea como papel curvándose y
+            // no como un giro plano de golpe.
+            val curlWidthPx = widthPx - flatWidthPx
+            if (curlWidthPx > 0.5f) {
+                val curlStartPx = if (isForward) foldPx else 0f
+                val sliceWidthPx = curlWidthPx / STRIP_COUNT
+
+                Box(Modifier.fillMaxSize()) {
+                    for (i in 0 until STRIP_COUNT) {
+                        // Tira 0 = pegada al pliegue (casi plana), tira N-1 =
+                        // en la punta que se despega (más girada y comprimida).
+                        val u = (i + 0.5f) / STRIP_COUNT
+                        val angleDeg = u * MAX_CURL_ANGLE_DEG
+                        val angleRad = Math.toRadians(angleDeg.toDouble())
+                        val foreshorten = cos(angleRad).toFloat().coerceAtLeast(0.08f)
+                        val shade = 1f - (u * 0.55f)
+
+                        val sliceStartPx = curlStartPx + if (isForward) {
+                            i * sliceWidthPx
+                        } else {
+                            curlWidthPx - (i + 1) * sliceWidthPx
+                        }
+
+                        Box(
+                            Modifier
+                                .fillMaxHeight()
+                                .width(with(density) { sliceWidthPx.toDp() })
+                                .offset(x = with(density) { sliceStartPx.toDp() })
+                                .graphicsLayer {
+                                    cameraDistance = 16f * density.density
+                                    rotationY = if (isForward) angleDeg else -angleDeg
+                                    scaleX = foreshorten
+                                    transformOrigin = TransformOrigin(
+                                        if (isForward) 0f else 1f,
+                                        0.5f,
+                                    )
+                                }
+                                .clipToBounds()
+                                .drawWithContent {
+                                    drawContent()
+                                    drawRect(Color.Black.copy(alpha = (1f - shade) * 0.7f))
+                                },
+                        ) {
+                            Box(
+                                Modifier
+                                    .fillMaxHeight()
+                                    .width(with(density) { widthPx.toDp() })
+                                    .offset { IntOffset(-sliceStartPx.roundToInt(), 0) },
+                            ) {
+                                turning(currentPage)
+                            }
+                        }
+                    }
+                }
+
+                // Sombra suave proyectada por la hoja que se levanta sobre la
+                // página de abajo, justo en el pliegue.
+                val shadowWidthPx = (widthPx * 0.06f).coerceAtMost(curlWidthPx)
+                Box(
+                    Modifier
+                        .fillMaxHeight()
+                        .width(with(density) { shadowWidthPx.toDp() })
+                        .offset(
+                            x = with(density) {
+                                (if (isForward) curlStartPx else curlStartPx + curlWidthPx - shadowWidthPx).toDp()
+                            },
+                        )
+                        .drawWithContent {
+                            val brush = Brush.horizontalGradient(
+                                colors = if (isForward) {
+                                    listOf(Color.Black.copy(alpha = 0.35f), Color.Transparent)
+                                } else {
+                                    listOf(Color.Transparent, Color.Black.copy(alpha = 0.35f))
+                                },
+                            )
+                            drawRect(brush)
+                        },
+                )
+            }
+        } else {
+            // En reposo: una sola instancia normal (permite pellizcar/zoom).
             pageContent(currentPage)
         }
 
-        // Capa transparente SIEMPRE encima de todo lo demás (incluida la imagen
-        // con zoom/pan): así el gesto de pasar página se detecta primero, sin
-        // pelearse con el pan interno del visor de imágenes de abajo.
         Box(
             Modifier
                 .fillMaxSize()
@@ -151,33 +243,50 @@ fun PageCurlPager(
                                 val fraction = offset.x / size.width.coerceAtLeast(1)
                                 scope.launch {
                                     when {
-                                        fraction < 0.3f -> if (reverseDirection) goNext() else goPrevious()
-                                        fraction > 0.7f -> if (reverseDirection) goPrevious() else goNext()
+                                        fraction < 0.3f -> animatedTurn(forward = reverseDirection)
+                                        fraction > 0.7f -> animatedTurn(forward = !reverseDirection)
                                     }
                                 }
                             })
                         }
                         launch {
                             detectHorizontalDragGestures(
-                                onDragStart = { dragging = true },
+                                onDragStart = { offset: Offset ->
+                                    val startFraction = (offset.x / widthPx).coerceIn(0f, 1f)
+                                    val wantsForward = if (reverseDirection) startFraction < 0.5f else startFraction >= 0.5f
+                                    direction = when {
+                                        wantsForward && currentPage < pageCount - 1 -> 1
+                                        !wantsForward && currentPage > 0 -> -1
+                                        else -> 0
+                                    }
+                                    // El pliegue arranca justo donde tocaste, no en un extremo
+                                    // fijo: así se puede empezar a pasar la hoja desde cualquier punto.
+                                    lastTouchFraction = startFraction
+                                    if (direction != 0) {
+                                        val forward = direction == 1
+                                        scope.launch { t.snapTo(tFor(forward, startFraction)) }
+                                    }
+                                },
                                 onDragEnd = {
-                                    dragging = false
-                                    scope.launch { settleDrag() }
+                                    if (direction == 0) return@detectHorizontalDragGestures
+                                    val forward = direction == 1
+                                    val finishedT = tFor(forward, lastTouchFraction)
+                                    scope.launch {
+                                        t.snapTo(finishedT)
+                                        if (finishedT > 0.5f) commitTurn(forward) else cancelTurn()
+                                    }
                                 },
                                 onDragCancel = {
-                                    dragging = false
-                                    scope.launch { animatable.animateTo(0f, tween(220)) }
-                                    progress = 0f
+                                    if (direction == 0) return@detectHorizontalDragGestures
+                                    scope.launch { cancelTurn() }
                                 },
-                                onHorizontalDrag = { change, dragAmount ->
+                                onHorizontalDrag = { change, _ ->
+                                    if (direction == 0 || widthPx <= 0f) return@detectHorizontalDragGestures
                                     change.consume()
-                                    if (widthPx <= 0f) return@detectHorizontalDragGestures
-                                    val rawDelta = dragAmount / widthPx
-                                    val delta = if (reverseDirection) -rawDelta else rawDelta
-                                    var next = progress + delta
-                                    if (next < 0f && currentPage >= pageCount - 1) next = 0f
-                                    if (next > 0f && currentPage <= 0) next = 0f
-                                    progress = next.coerceIn(-1f, 1f)
+                                    val fraction = (change.position.x / widthPx).coerceIn(0f, 1f)
+                                    lastTouchFraction = fraction
+                                    val forward = direction == 1
+                                    scope.launch { t.snapTo(tFor(forward, fraction)) }
                                 },
                             )
                         }
@@ -187,6 +296,3 @@ fun PageCurlPager(
         )
     }
 }
-
-private fun tween(durationMillis: Int) =
-    androidx.compose.animation.core.tween<Float>(durationMillis = durationMillis)
