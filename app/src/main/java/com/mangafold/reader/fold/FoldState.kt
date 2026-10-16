@@ -3,16 +3,14 @@ package com.mangafold.reader.fold
 import androidx.activity.ComponentActivity
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.State
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.platform.LocalContext
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.window.layout.FoldingFeature
 import androidx.window.layout.WindowInfoTracker
 import androidx.window.layout.WindowLayoutInfo
-import kotlinx.coroutines.flow.map
 
 /**
  * Postura actual del dispositivo plegable (pensado para el OnePlus Open,
@@ -33,16 +31,17 @@ sealed class FoldPosture {
 fun rememberFoldPosture(): State<FoldPosture> {
     val context = LocalContext.current
     val activity = context as? ComponentActivity
+        ?: return remember { mutableStateOf<FoldPosture>(FoldPosture.Flat) }
 
-    val defaultState = remember { mutableStateOf<FoldPosture>(FoldPosture.Flat) }
-    if (activity == null) return defaultState
-
-    val layoutInfoFlow = remember(activity) {
-        WindowInfoTracker.getOrCreate(activity).windowLayoutInfo(activity)
-            .map { info -> toPosture(info) }
+    // produceState ata la recolección al ciclo de vida de la propia
+    // composición (se cancela sola al salir de pantalla), sin depender de
+    // LocalLifecycleOwner, que no siempre está presente en este punto del
+    // árbol y provocaba un crash al entrar al lector.
+    return produceState<FoldPosture>(initialValue = FoldPosture.Flat, activity) {
+        WindowInfoTracker.getOrCreate(activity).windowLayoutInfo(activity).collect { info ->
+            value = toPosture(info)
+        }
     }
-
-    return layoutInfoFlow.collectAsStateWithLifecycle(initialValue = FoldPosture.Flat)
 }
 
 private fun toPosture(info: WindowLayoutInfo): FoldPosture {
