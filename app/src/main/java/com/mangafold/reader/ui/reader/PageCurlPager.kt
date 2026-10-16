@@ -42,8 +42,16 @@ fun PageCurlPager(
     onPageChange: (Int) -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
-    onTapPrevious: () -> Unit = { if (currentPage > 0) onPageChange(currentPage - 1) },
-    onTapNext: () -> Unit = { if (currentPage < pageCount - 1) onPageChange(currentPage + 1) },
+    /** true = lectura derecha→izquierda (manga clásico): deslizar a la derecha avanza. */
+    reverseDirection: Boolean = false,
+    onTapPrevious: () -> Unit = {
+        val target = if (reverseDirection) currentPage + 1 else currentPage - 1
+        if (target in 0 until pageCount) onPageChange(target)
+    },
+    onTapNext: () -> Unit = {
+        val target = if (reverseDirection) currentPage - 1 else currentPage + 1
+        if (target in 0 until pageCount) onPageChange(target)
+    },
     pageContent: @Composable (pageIndex: Int) -> Unit,
 ) {
     val scope = rememberCoroutineScope()
@@ -63,72 +71,7 @@ fun PageCurlPager(
         }
     }
 
-    Box(
-        modifier = modifier
-            .fillMaxSize()
-            .pointerInput(enabled, currentPage, pageCount) {
-                if (!enabled) return@pointerInput
-                coroutineScope {
-                    // Los toques en el tercio izquierdo/derecho pasan de página al
-                    // instante (navegación rápida); el gesto de arrastre, detectado
-                    // en paralelo sobre el mismo flujo de eventos, es el que dibuja
-                    // la animación de la hoja.
-                    launch {
-                        detectTapGestures(onTap = { offset ->
-                            val fraction = offset.x / size.width.coerceAtLeast(1)
-                            when {
-                                fraction < 0.3f -> onTapPrevious()
-                                fraction > 0.7f -> onTapNext()
-                            }
-                        })
-                    }
-                    launch {
-                        detectHorizontalDragGestures(
-                            onDragStart = { dragging = true },
-                            onDragEnd = {
-                                dragging = false
-                                val threshold = 0.35f
-                                scope.launch {
-                                    when {
-                                        progress <= -threshold && currentPage < pageCount - 1 -> {
-                                            animatable.animateTo(-1f, tween(220))
-                                            onPageChange(currentPage + 1)
-                                            progress = 0f
-                                            animatable.snapTo(0f)
-                                        }
-                                        progress >= threshold && currentPage > 0 -> {
-                                            animatable.animateTo(1f, tween(220))
-                                            onPageChange(currentPage - 1)
-                                            progress = 0f
-                                            animatable.snapTo(0f)
-                                        }
-                                        else -> {
-                                            animatable.animateTo(0f, tween(220))
-                                            progress = 0f
-                                        }
-                                    }
-                                }
-                            },
-                            onDragCancel = {
-                                dragging = false
-                                scope.launch { animatable.animateTo(0f, tween(220)) }
-                                progress = 0f
-                            },
-                            onHorizontalDrag = { change, dragAmount ->
-                                change.consume()
-                                if (widthPx <= 0f) return@detectHorizontalDragGestures
-                                val delta = dragAmount / widthPx
-                                var next = progress + delta
-                                if (next < 0f && currentPage >= pageCount - 1) next = 0f
-                                if (next > 0f && currentPage <= 0) next = 0f
-                                progress = next.coerceIn(-1f, 1f)
-                            },
-                        )
-                    }
-                }
-            }
-            .onSizeChanged { widthPx = it.width.toFloat() },
-    ) {
+    Box(modifier = modifier.fillMaxSize()) {
         val animatedProgress = if (dragging) progress else animatable.value
 
         // Página de abajo: la que se va a revelar (siguiente si se avanza,
@@ -173,6 +116,73 @@ fun PageCurlPager(
         ) {
             pageContent(currentPage)
         }
+
+        // Capa transparente SIEMPRE encima de todo lo demás (incluida la imagen
+        // con zoom/pan): así el gesto de pasar página se detecta primero, sin
+        // pelearse con el pan interno del visor de imágenes de abajo.
+        Box(
+            Modifier
+                .fillMaxSize()
+                .pointerInput(enabled, currentPage, pageCount, reverseDirection) {
+                    if (!enabled) return@pointerInput
+                    coroutineScope {
+                        launch {
+                            detectTapGestures(onTap = { offset ->
+                                val fraction = offset.x / size.width.coerceAtLeast(1)
+                                when {
+                                    fraction < 0.3f -> onTapPrevious()
+                                    fraction > 0.7f -> onTapNext()
+                                }
+                            })
+                        }
+                        launch {
+                            detectHorizontalDragGestures(
+                                onDragStart = { dragging = true },
+                                onDragEnd = {
+                                    dragging = false
+                                    val threshold = 0.35f
+                                    scope.launch {
+                                        when {
+                                            progress <= -threshold && currentPage < pageCount - 1 -> {
+                                                animatable.animateTo(-1f, tween(220))
+                                                onPageChange(currentPage + 1)
+                                                progress = 0f
+                                                animatable.snapTo(0f)
+                                            }
+                                            progress >= threshold && currentPage > 0 -> {
+                                                animatable.animateTo(1f, tween(220))
+                                                onPageChange(currentPage - 1)
+                                                progress = 0f
+                                                animatable.snapTo(0f)
+                                            }
+                                            else -> {
+                                                animatable.animateTo(0f, tween(220))
+                                                progress = 0f
+                                            }
+                                        }
+                                    }
+                                },
+                                onDragCancel = {
+                                    dragging = false
+                                    scope.launch { animatable.animateTo(0f, tween(220)) }
+                                    progress = 0f
+                                },
+                                onHorizontalDrag = { change, dragAmount ->
+                                    change.consume()
+                                    if (widthPx <= 0f) return@detectHorizontalDragGestures
+                                    val rawDelta = dragAmount / widthPx
+                                    val delta = if (reverseDirection) -rawDelta else rawDelta
+                                    var next = progress + delta
+                                    if (next < 0f && currentPage >= pageCount - 1) next = 0f
+                                    if (next > 0f && currentPage <= 0) next = 0f
+                                    progress = next.coerceIn(-1f, 1f)
+                                },
+                            )
+                        }
+                    }
+                }
+                .onSizeChanged { widthPx = it.width.toFloat() },
+        )
     }
 }
 

@@ -26,6 +26,12 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     private val _currentPage = MutableStateFlow(0)
     val currentPage = _currentPage.asStateFlow()
 
+    val rtlReading = repository.rtlReading
+
+    fun toggleRtlReading() {
+        repository.setRtlReading(!rtlReading.value)
+    }
+
     fun load(manga: Manga) {
         viewModelScope.launch {
             _uiState.value = ReaderUiState.Loading

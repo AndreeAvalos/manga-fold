@@ -16,6 +16,7 @@ import java.security.MessageDigest
 
 private const val PREFS_NAME = "mangafold_prefs"
 private const val KEY_LIBRARY = "library_json"
+private const val KEY_RTL_READING = "rtl_reading"
 
 private val IMAGE_EXTENSIONS = setOf("jpg", "jpeg", "png", "webp", "gif", "bmp")
 private val ARCHIVE_EXTENSIONS = setOf("cbz", "zip")
@@ -26,6 +27,14 @@ class MangaRepository(private val context: Context) {
 
     private val _library = MutableStateFlow(loadFromPrefs())
     val library = _library.asStateFlow()
+
+    private val _rtlReading = MutableStateFlow(prefs.getBoolean(KEY_RTL_READING, false))
+    val rtlReading = _rtlReading.asStateFlow()
+
+    fun setRtlReading(value: Boolean) {
+        prefs.edit().putBoolean(KEY_RTL_READING, value).apply()
+        _rtlReading.value = value
+    }
 
     private fun loadFromPrefs(): List<Manga> {
         val raw = prefs.getString(KEY_LIBRARY, null) ?: return emptyList()
