@@ -110,17 +110,19 @@ fun PageCurlPager(
             val forward = if (value != 0f) value < 0f else direction == 1
             val targetIndex = if (forward) currentPage + 1 else currentPage - 1
 
-            // Página de destino, siempre debajo a pantalla completa: se
-            // revela conforme la página que gira se va viendo de canto.
-            if (targetIndex in 0 until pageCount) {
-                Box(Modifier.fillMaxSize()) { turning(targetIndex) }
-            }
-
             // Pivote: el que se fije explícitamente, o si no, el lado
             // contrario al que se está pasando (la "costura").
             val pivotFraction = pivotOverride ?: if (forward) 0f else 1f
 
             if (signedAngle.absoluteValue <= 90f) {
+                // Primer tramo: debajo, a pantalla completa, la página de
+                // destino (se revela conforme la de arriba se ve de canto).
+                // Solo se dibuja en este tramo: en el segundo ya la cubre
+                // por completo la propia FlippingPage de abajo, y dibujarla
+                // dos veces a la vez se veía como una página duplicada.
+                if (targetIndex in 0 until pageCount) {
+                    Box(Modifier.fillMaxSize()) { turning(targetIndex) }
+                }
                 // Primer tramo: la página actual gira mostrando su frente.
                 FlippingPage(
                     rotationY = signedAngle,
