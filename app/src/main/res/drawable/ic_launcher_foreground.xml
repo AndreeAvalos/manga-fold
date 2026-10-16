@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Página izquierda -->
+    <path
+        android:fillColor="#F3ECD9"
+        android:pathData="M20,30 L54,24 L54,84 L20,90 Z" />
+    <!-- Página derecha, con esquina curvada simulando el gesto de pasar hoja -->
+    <path
+        android:fillColor="#F3ECD9"
+        android:pathData="M54,24 L80,30 L80,80 L64,90 L54,84 Z" />
+    <path
+        android:fillColor="#D8CBA8"
+        android:pathData="M80,80 L64,90 L72,78 Z" />
+    <!-- Lomo -->
+    <path
+        android:fillColor="#C0392B"
+        android:pathData="M52,22 L56,22 L56,86 L52,86 Z" />
+</vector>

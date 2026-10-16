@@ -1,0 +1,7 @@
+<resources>
+    <color name="ic_launcher_background">#1C1B2E</color>
+    <color name="paper_cream">#F3ECD9</color>
+    <color name="paper_shadow">#00000055</color>
+    <color name="ink_dark">#1C1B2E</color>
+    <color name="accent_red">#C0392B</color>
+</resources>

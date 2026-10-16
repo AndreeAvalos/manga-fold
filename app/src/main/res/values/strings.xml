@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">MangaFold</string>
+    <string name="library_title">Mi biblioteca</string>
+    <string name="add_manga">Añadir manga</string>
+    <string name="empty_library">Aún no has añadido ningún manga.\nToca el botón + para elegir una carpeta de imágenes o un archivo .cbz/.zip.</string>
+    <string name="page_of">Página %1$d de %2$d</string>
+</resources>
