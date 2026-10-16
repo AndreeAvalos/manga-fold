@@ -157,17 +157,53 @@ private fun MangaPager(pages: List<PageSource>, isSpread: Boolean, reverseDirect
     val groupCount = groups.size
 
     Box(Modifier.fillMaxSize()) {
-        PageCurlPager(
-            pageCount = groupCount,
-            currentPage = groupIndex,
-            onPageChange = { groupIndex = it },
-            modifier = Modifier.fillMaxSize(),
-            reverseDirection = reverseDirection,
-            turningPageContent = { index ->
-                GroupContent(index, groups, isSpread, reverseDirection, zoomable = false)
-            },
-        ) { index ->
-            GroupContent(index, groups, isSpread, reverseDirection, zoomable = true)
+        if (isSpread) {
+            // Dos páginas, cada una con su propio giro independiente con
+            // bisagra en el centro (el lomo), en vez de que toda la doble
+            // página se mueva como un solo bloque rígido.
+            Row(Modifier.fillMaxSize()) {
+                SpreadSlot(
+                    modifier = Modifier.weight(1f).fillMaxHeight(),
+                    groupCount = groupCount,
+                    groupIndex = groupIndex,
+                    onGroupChange = { groupIndex = it },
+                    reverseDirection = reverseDirection,
+                    // Sin invertir: el lado derecho avanza. Invertido (manga):
+                    // el lado izquierdo avanza. La bisagra, en cambio, siempre
+                    // queda en el lomo central sin importar quién avanza:
+                    // esta es la mitad izquierda, así que su lomo es su
+                    // borde derecho (pivotOverride = 1f).
+                    isForwardSlot = reverseDirection,
+                    pivotOverride = 1f,
+                    pageOf = { group -> if (reverseDirection) group.getOrNull(1) else group.getOrNull(0) },
+                    groups = groups,
+                )
+                SpreadSlot(
+                    modifier = Modifier.weight(1f).fillMaxHeight(),
+                    groupCount = groupCount,
+                    groupIndex = groupIndex,
+                    onGroupChange = { groupIndex = it },
+                    reverseDirection = reverseDirection,
+                    isForwardSlot = !reverseDirection,
+                    // Mitad derecha: su lomo es su borde izquierdo.
+                    pivotOverride = 0f,
+                    pageOf = { group -> if (reverseDirection) group.getOrNull(0) else group.getOrNull(1) },
+                    groups = groups,
+                )
+            }
+        } else {
+            PageCurlPager(
+                pageCount = groupCount,
+                currentPage = groupIndex,
+                onPageChange = { groupIndex = it },
+                modifier = Modifier.fillMaxSize(),
+                reverseDirection = reverseDirection,
+                turningPageContent = { index ->
+                    PageImage(groups.getOrNull(index)?.getOrNull(0), Modifier.fillMaxSize(), zoomable = false)
+                },
+            ) { index ->
+                PageImage(groups.getOrNull(index)?.getOrNull(0), Modifier.fillMaxSize(), zoomable = true)
+            }
         }
 
         Text(
@@ -181,26 +217,37 @@ private fun MangaPager(pages: List<PageSource>, isSpread: Boolean, reverseDirect
     }
 }
 
+/**
+ * Una sola mitad del spread, con su propio [PageCurlPager]: solo deja pasar
+ * en el sentido que le corresponde ([isForwardSlot]), para que tocar un lado
+ * del libro solo gire esa página y no las dos a la vez.
+ */
 @Composable
-private fun GroupContent(
-    index: Int,
-    groups: List<List<PageSource>>,
-    isSpread: Boolean,
+private fun SpreadSlot(
+    modifier: Modifier,
+    groupCount: Int,
+    groupIndex: Int,
+    onGroupChange: (Int) -> Unit,
     reverseDirection: Boolean,
-    zoomable: Boolean,
+    isForwardSlot: Boolean,
+    pivotOverride: Float,
+    pageOf: (List<PageSource>) -> PageSource?,
+    groups: List<List<PageSource>>,
 ) {
-    val group = groups.getOrNull(index).orEmpty()
-    if (isSpread) {
-        // En lectura derecha→izquierda el spread también se invierte: la
-        // página más adelantada va a la izquierda.
-        val left = if (reverseDirection) group.getOrNull(1) else group.getOrNull(0)
-        val right = if (reverseDirection) group.getOrNull(0) else group.getOrNull(1)
-        Row(Modifier.fillMaxSize()) {
-            PageImage(left, Modifier.weight(1f).fillMaxHeight(), zoomable)
-            PageImage(right, Modifier.weight(1f).fillMaxHeight(), zoomable)
-        }
-    } else {
-        PageImage(group.getOrNull(0), Modifier.fillMaxSize(), zoomable)
+    PageCurlPager(
+        pageCount = groupCount,
+        currentPage = groupIndex,
+        onPageChange = onGroupChange,
+        modifier = modifier,
+        reverseDirection = reverseDirection,
+        allowForward = isForwardSlot,
+        allowBackward = !isForwardSlot,
+        pivotOverride = pivotOverride,
+        turningPageContent = { index ->
+            PageImage(pageOf(groups.getOrNull(index).orEmpty()), Modifier.fillMaxSize(), zoomable = false)
+        },
+    ) { index ->
+        PageImage(pageOf(groups.getOrNull(index).orEmpty()), Modifier.fillMaxSize(), zoomable = true)
     }
 }
 

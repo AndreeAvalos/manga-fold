@@ -43,6 +43,18 @@ fun PageCurlPager(
     enabled: Boolean = true,
     /** true = lectura derecha→izquierda (manga clásico): el lado derecho retrocede. */
     reverseDirection: Boolean = false,
+    /** Si es false, este pager ignora los gestos que avanzarían de página
+     *  (se usa en el modo de dos páginas: cada mitad solo gira en un sentido). */
+    allowForward: Boolean = true,
+    /** Igual que [allowForward] pero para retroceder. */
+    allowBackward: Boolean = true,
+    /**
+     * Fija la bisagra en un borde concreto (0f = izquierda, 1f = derecha) en
+     * vez de deducirla del sentido del giro. Se usa en el modo de dos
+     * páginas: cada mitad debe girar siempre sobre el lomo central, sin
+     * importar si ese lado avanza o retrocede.
+     */
+    pivotOverride: Float? = null,
     /**
      * Versión ligera (sin zoom/pan) usada mientras la página se está
      * animando. Si se omite, se reusa [pageContent].
@@ -92,10 +104,7 @@ fun PageCurlPager(
 
     Box(modifier = modifier.fillMaxSize()) {
         val value = t.value
-        // Ángulo de giro ya en el signo correcto para graphicsLayer: positivo
-        // cuando se avanza con el pivote a la izquierda (coincide con la
-        // convención ya probada en el resto de la app).
-        val signedAngle = value * -180f
+        val signedAngle = value * 180f
 
         if (direction != 0 || value != 0f) {
             val forward = if (value != 0f) value < 0f else direction == 1
@@ -107,8 +116,9 @@ fun PageCurlPager(
                 Box(Modifier.fillMaxSize()) { turning(targetIndex) }
             }
 
-            // Pivote: el lado contrario al que se está pasando (la "costura").
-            val pivotFraction = if (forward) 0f else 1f
+            // Pivote: el que se fije explícitamente, o si no, el lado
+            // contrario al que se está pasando (la "costura").
+            val pivotFraction = pivotOverride ?: if (forward) 0f else 1f
 
             if (signedAngle.absoluteValue <= 90f) {
                 // Primer tramo: la página actual gira mostrando su frente.
@@ -147,8 +157,18 @@ fun PageCurlPager(
                                 val fraction = offset.x / size.width.coerceAtLeast(1)
                                 scope.launch {
                                     when {
-                                        fraction < 0.3f -> animatedTurn(forward = reverseDirection)
-                                        fraction > 0.7f -> animatedTurn(forward = !reverseDirection)
+                                        fraction < 0.3f -> {
+                                            val forward = reverseDirection
+                                            if ((forward && allowForward) || (!forward && allowBackward)) {
+                                                animatedTurn(forward)
+                                            }
+                                        }
+                                        fraction > 0.7f -> {
+                                            val forward = !reverseDirection
+                                            if ((forward && allowForward) || (!forward && allowBackward)) {
+                                                animatedTurn(forward)
+                                            }
+                                        }
                                     }
                                 }
                             })
@@ -156,12 +176,18 @@ fun PageCurlPager(
                         launch {
                             detectHorizontalDragGestures(
                                 onDragStart = { offset: Offset ->
-                                    val startFraction = (offset.x / widthPx).coerceIn(0f, 1f)
-                                    val wantsForward = if (reverseDirection) startFraction < 0.5f else startFraction >= 0.5f
                                     direction = when {
-                                        wantsForward && currentPage < pageCount - 1 -> 1
-                                        !wantsForward && currentPage > 0 -> -1
-                                        else -> 0
+                                        allowForward && !allowBackward -> if (currentPage < pageCount - 1) 1 else 0
+                                        allowBackward && !allowForward -> if (currentPage > 0) -1 else 0
+                                        else -> {
+                                            val startFraction = (offset.x / widthPx).coerceIn(0f, 1f)
+                                            val wantsForward = if (reverseDirection) startFraction < 0.5f else startFraction >= 0.5f
+                                            when {
+                                                wantsForward && currentPage < pageCount - 1 -> 1
+                                                !wantsForward && currentPage > 0 -> -1
+                                                else -> 0
+                                            }
+                                        }
                                     }
                                 },
                                 onDragEnd = {
