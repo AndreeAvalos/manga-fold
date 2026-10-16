@@ -61,22 +61,34 @@ class MangaRepository(private val context: Context) {
     }
 
     fun addFolder(uri: Uri) {
-        context.contentResolver.takePersistableUriPermission(
-            uri,
-            Intent.FLAG_GRANT_READ_URI_PERMISSION,
-        )
+        persistPermission(uri)
         val doc = DocumentFile.fromTreeUri(context, uri)
         val title = doc?.name ?: "Manga"
         addManga(Manga(id = idFor(uri), title = title, uri = uri, type = MangaType.FOLDER))
     }
 
     fun addArchive(uri: Uri) {
-        context.contentResolver.takePersistableUriPermission(
-            uri,
-            Intent.FLAG_GRANT_READ_URI_PERMISSION,
-        )
+        persistPermission(uri)
         val title = queryDisplayName(context.contentResolver, uri) ?: "Manga"
         addManga(Manga(id = idFor(uri), title = title.substringBeforeLast('.'), uri = uri, type = MangaType.ARCHIVE))
+    }
+
+    /**
+     * Algunos proveedores de documentos (ciertos gestores de archivos, nubes,
+     * etc.) no permiten un permiso persistente aunque vengan de
+     * ACTION_OPEN_DOCUMENT; sin este try/catch esa SecurityException tiraba
+     * la app entera al elegir un archivo así.
+     */
+    private fun persistPermission(uri: Uri) {
+        try {
+            context.contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION,
+            )
+        } catch (e: SecurityException) {
+            // Seguimos igual: el permiso temporal de esta sesión alcanza para
+            // leerlo ahora mismo, aunque no sobreviva a un reinicio de la app.
+        }
     }
 
     private fun addManga(manga: Manga) {
@@ -93,9 +105,15 @@ class MangaRepository(private val context: Context) {
     }
 
     suspend fun loadPages(manga: Manga): List<PageSource> = withContext(Dispatchers.IO) {
-        when (manga.type) {
-            MangaType.FOLDER -> loadFolderPages(manga.uri)
-            MangaType.ARCHIVE -> CbzExtractor.extract(context, manga.uri, manga.id).map { PageSource.FromFile(it) }
+        try {
+            when (manga.type) {
+                MangaType.FOLDER -> loadFolderPages(manga.uri)
+                MangaType.ARCHIVE -> CbzExtractor.extract(context, manga.uri, manga.id).map { PageSource.FromFile(it) }
+            }
+        } catch (e: Exception) {
+            // Permiso revocado, archivo movido/borrado, zip corrupto, etc.:
+            // mejor una biblioteca vacía que una app que se cierra.
+            emptyList()
         }
     }
 
