@@ -32,8 +32,8 @@ import kotlin.math.absoluteValue
  * asomando. No es un modelo físico de papel, pero da la sensación de "hoja"
  * en vez de un simple deslizamiento plano.
  *
- * Soporta modo libro (dos páginas visibles, pivote en el lomo central) y modo
- * una sola página (pivote en el borde que corresponda según la dirección).
+ * Tanto arrastrar como tocar el borde izquierdo/derecho disparan la misma
+ * animación: el toque simplemente anima el progreso completo de una vez.
  */
 @Composable
 fun PageCurlPager(
@@ -42,23 +42,15 @@ fun PageCurlPager(
     onPageChange: (Int) -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
-    /** true = lectura derecha→izquierda (manga clásico): deslizar a la derecha avanza. */
+    /** true = lectura derecha→izquierda (manga clásico): deslizar/tocar a la derecha avanza. */
     reverseDirection: Boolean = false,
-    onTapPrevious: () -> Unit = {
-        val target = if (reverseDirection) currentPage + 1 else currentPage - 1
-        if (target in 0 until pageCount) onPageChange(target)
-    },
-    onTapNext: () -> Unit = {
-        val target = if (reverseDirection) currentPage - 1 else currentPage + 1
-        if (target in 0 until pageCount) onPageChange(target)
-    },
     pageContent: @Composable (pageIndex: Int) -> Unit,
 ) {
     val scope = rememberCoroutineScope()
     val density = LocalDensity.current
 
-    // progress > 0  -> arrastrando hacia la derecha (vuelve a la página anterior)
-    // progress < 0  -> arrastrando hacia la izquierda (avanza a la siguiente página)
+    // progress > 0  -> volviendo a la página anterior
+    // progress < 0  -> avanzando a la siguiente página
     var progress by remember { mutableFloatStateOf(0f) }
     var widthPx by remember { mutableFloatStateOf(1f) }
     var dragging by remember { mutableStateOf(false) }
@@ -68,6 +60,34 @@ fun PageCurlPager(
     LaunchedEffect(progress, dragging) {
         if (!dragging) {
             animatable.snapTo(progress)
+        }
+    }
+
+    suspend fun goNext() {
+        if (currentPage >= pageCount - 1) return
+        animatable.animateTo(-1f, tween(220))
+        onPageChange(currentPage + 1)
+        progress = 0f
+        animatable.snapTo(0f)
+    }
+
+    suspend fun goPrevious() {
+        if (currentPage <= 0) return
+        animatable.animateTo(1f, tween(220))
+        onPageChange(currentPage - 1)
+        progress = 0f
+        animatable.snapTo(0f)
+    }
+
+    suspend fun settleDrag() {
+        val threshold = 0.35f
+        when {
+            progress <= -threshold && currentPage < pageCount - 1 -> goNext()
+            progress >= threshold && currentPage > 0 -> goPrevious()
+            else -> {
+                animatable.animateTo(0f, tween(220))
+                progress = 0f
+            }
         }
     }
 
@@ -129,9 +149,11 @@ fun PageCurlPager(
                         launch {
                             detectTapGestures(onTap = { offset ->
                                 val fraction = offset.x / size.width.coerceAtLeast(1)
-                                when {
-                                    fraction < 0.3f -> onTapPrevious()
-                                    fraction > 0.7f -> onTapNext()
+                                scope.launch {
+                                    when {
+                                        fraction < 0.3f -> if (reverseDirection) goNext() else goPrevious()
+                                        fraction > 0.7f -> if (reverseDirection) goPrevious() else goNext()
+                                    }
                                 }
                             })
                         }
@@ -140,27 +162,7 @@ fun PageCurlPager(
                                 onDragStart = { dragging = true },
                                 onDragEnd = {
                                     dragging = false
-                                    val threshold = 0.35f
-                                    scope.launch {
-                                        when {
-                                            progress <= -threshold && currentPage < pageCount - 1 -> {
-                                                animatable.animateTo(-1f, tween(220))
-                                                onPageChange(currentPage + 1)
-                                                progress = 0f
-                                                animatable.snapTo(0f)
-                                            }
-                                            progress >= threshold && currentPage > 0 -> {
-                                                animatable.animateTo(1f, tween(220))
-                                                onPageChange(currentPage - 1)
-                                                progress = 0f
-                                                animatable.snapTo(0f)
-                                            }
-                                            else -> {
-                                                animatable.animateTo(0f, tween(220))
-                                                progress = 0f
-                                            }
-                                        }
-                                    }
+                                    scope.launch { settleDrag() }
                                 },
                                 onDragCancel = {
                                     dragging = false

@@ -3,6 +3,7 @@ package com.mangafold.reader.ui.reader
 import android.app.Activity
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -38,9 +39,12 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.mangafold.reader.data.Manga
 import com.mangafold.reader.data.PageSource
-import com.mangafold.reader.fold.FoldPosture
-import com.mangafold.reader.fold.rememberFoldPosture
 import me.saket.telephoto.zoomable.coil.ZoomableAsyncImage
+
+/** Por debajo de este ancho se trata como "una sola pantalla" (plegado o un
+ *  móvil normal); por encima, como pantalla grande desplegada: se muestran
+ *  dos páginas lado a lado, aprovechando ambas mitades del panel interior. */
+private val SPREAD_WIDTH_BREAKPOINT = 600.dp
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -52,7 +56,6 @@ fun ReaderScreen(
     LaunchedEffect(manga.id) { viewModel.load(manga) }
 
     val uiState by viewModel.uiState.collectAsState()
-    val foldPosture by rememberFoldPosture()
     val rtlReading by viewModel.rtlReading.collectAsState()
 
     ImmersiveMode()
@@ -90,12 +93,13 @@ fun ReaderScreen(
         },
         containerColor = Color.Black,
     ) { padding ->
-        Box(
+        BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
                 .background(Color.Black),
         ) {
+            val isSpread = maxWidth >= SPREAD_WIDTH_BREAKPOINT
             when (val state = uiState) {
                 is ReaderUiState.Loading -> {
                     CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
@@ -112,7 +116,7 @@ fun ReaderScreen(
                 is ReaderUiState.Ready -> {
                     MangaPager(
                         pages = state.pages,
-                        isSpread = foldPosture is FoldPosture.Book,
+                        isSpread = isSpread,
                         reverseDirection = rtlReading,
                     )
                 }
