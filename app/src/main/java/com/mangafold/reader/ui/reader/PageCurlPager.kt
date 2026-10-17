@@ -15,6 +15,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -114,7 +115,10 @@ fun PageCurlPager(
         committing = false
     }
 
-    Box(modifier = modifier.fillMaxSize()) {
+    // Recorta todo lo que se dibuje dentro a los límites exactos de esta
+    // instancia: sin esto, una página rotando en 3D cerca de los 90° puede
+    // "derramarse" visualmente sobre la mitad vecina del spread.
+    Box(modifier = modifier.fillMaxSize().clipToBounds()) {
         val value = t.value
         val signedAngle = value * 180f
 
@@ -248,6 +252,10 @@ private fun FlippingPage(
                 cameraDistance = 12f * density.density
                 this.rotationY = rotationY
                 transformOrigin = TransformOrigin(pivotFraction, 0.5f)
+                // Sin esto, al girar en 3D el contenido se puede "derramar"
+                // fuera de los límites de esta mitad (sobre todo cerca de
+                // 90°) y pintarse encima de la otra página del spread.
+                clip = true
             }
             .drawWithContent {
                 drawContent()
