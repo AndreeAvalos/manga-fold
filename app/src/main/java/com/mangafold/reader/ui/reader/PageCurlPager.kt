@@ -24,7 +24,6 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
-import android.util.Log
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlin.math.absoluteValue
@@ -58,8 +57,6 @@ fun PageCurlPager(
      * importar si ese lado avanza o retrocede.
      */
     pivotOverride: Float? = null,
-    /** Solo para depuración temporal: identifica esta instancia en logcat. */
-    debugTag: String = "pager",
     /**
      * Versión ligera (sin zoom/pan) usada mientras la página se está
      * animando. Si se omite, se reusa [pageContent].
@@ -85,35 +82,27 @@ fun PageCurlPager(
     val t = remember { Animatable(0f) }
 
     suspend fun settle() {
-        Log.d("PageCurl", "[$debugTag] settle() start value=${t.value} currentPage=$currentPage committing=$committing")
         if (committing) return
         committing = true
         val value = t.value
         when {
             value <= -0.5f && currentPage < pageCount - 1 -> {
-                Log.d("PageCurl", "[$debugTag] settle() -> COMMIT forward, $currentPage -> ${currentPage + 1}")
                 t.animateTo(-1f, tween(260))
                 onPageChange(currentPage + 1)
                 t.snapTo(0f)
             }
             value >= 0.5f && currentPage > 0 -> {
-                Log.d("PageCurl", "[$debugTag] settle() -> COMMIT backward, $currentPage -> ${currentPage - 1}")
                 t.animateTo(1f, tween(260))
                 onPageChange(currentPage - 1)
                 t.snapTo(0f)
             }
-            else -> {
-                Log.d("PageCurl", "[$debugTag] settle() -> CANCEL (value=$value)")
-                t.animateTo(0f, tween(200))
-            }
+            else -> t.animateTo(0f, tween(200))
         }
         direction = 0
         committing = false
-        Log.d("PageCurl", "[$debugTag] settle() end currentPage=$currentPage t=${t.value}")
     }
 
     suspend fun animatedTurn(forward: Boolean) {
-        Log.d("PageCurl", "[$debugTag] animatedTurn(forward=$forward) currentPage=$currentPage committing=$committing")
         if (committing) return
         if ((forward && currentPage >= pageCount - 1) || (!forward && currentPage <= 0)) return
         committing = true
@@ -124,16 +113,11 @@ fun PageCurlPager(
         t.snapTo(0f)
         direction = 0
         committing = false
-        Log.d("PageCurl", "[$debugTag] animatedTurn() end currentPage=$currentPage")
     }
 
     // Recorta todo lo que se dibuje dentro a los límites exactos de esta
     // instancia: sin esto, una página rotando en 3D cerca de los 90° puede
     // "derramarse" visualmente sobre la mitad vecina del spread.
-    androidx.compose.runtime.LaunchedEffect(direction, currentPage) {
-        Log.d("PageCurl", "[$debugTag] RENDER direction=$direction currentPage=$currentPage pageCount=$pageCount")
-    }
-
     Box(modifier = modifier.fillMaxSize().clipToBounds()) {
         val value = t.value
         val signedAngle = value * 180f
@@ -165,8 +149,12 @@ fun PageCurlPager(
                 }
             } else if (targetIndex in 0 until pageCount) {
                 // Segundo tramo: ya pasó los 90°, termina de girar la
-                // página siguiente/anterior hasta quedar plana.
-                val remaining = if (forward) signedAngle - 180f else signedAngle + 180f
+                // página siguiente/anterior hasta quedar plana. (+180/-180
+                // es una vuelta completa, así que el ángulo visual es el
+                // mismo que signedAngle∓180 — da igual cuál de los dos
+                // signos se use aquí, por eso cualquiera de las dos ramas
+                // sirve para ambos sentidos.)
+                val remaining = if (forward) signedAngle + 180f else signedAngle - 180f
                 FlippingPage(
                     rotationY = remaining,
                     pivotFraction = pivotFraction,
@@ -224,10 +212,8 @@ fun PageCurlPager(
                                             }
                                         }
                                     }
-                                    Log.d("PageCurl", "[$debugTag] onDragStart currentPage=$currentPage -> direction=$direction")
                                 },
                                 onDragEnd = {
-                                    Log.d("PageCurl", "[$debugTag] onDragEnd direction=$direction t=${t.value}")
                                     if (direction == 0) return@detectHorizontalDragGestures
                                     scope.launch { settle() }
                                 },
@@ -267,12 +253,13 @@ private fun FlippingPage(
         Modifier
             .fillMaxSize()
             .graphicsLayer {
-                cameraDistance = 12f * density.density
+                // Una distancia de cámara chica exagera muchísimo la
+                // perspectiva y puede verse distorsionado/roto justo cerca
+                // de los 90°; con un valor más generoso el giro se ve
+                // sólido en todo el recorrido.
+                cameraDistance = 48f * density.density
                 this.rotationY = rotationY
                 transformOrigin = TransformOrigin(pivotFraction, 0.5f)
-                // Sin esto, al girar en 3D el contenido se puede "derramar"
-                // fuera de los límites de esta mitad (sobre todo cerca de
-                // 90°) y pintarse encima de la otra página del spread.
                 clip = true
             }
             .drawWithContent {
