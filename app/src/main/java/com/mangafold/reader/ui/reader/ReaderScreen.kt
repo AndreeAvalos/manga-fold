@@ -172,12 +172,12 @@ private fun MangaPager(pages: List<PageSource>, isSpread: Boolean, reverseDirect
                     groupIndex = groupIndex,
                     onGroupChange = setGroupIndex,
                     reverseDirection = reverseDirection,
-                    // Sin invertir: el lado derecho avanza. Invertido (manga):
-                    // el lado izquierdo avanza. La bisagra, en cambio, siempre
-                    // queda en el lomo central sin importar quién avanza:
-                    // esta es la mitad izquierda, así que su lomo es su
-                    // borde derecho (pivotOverride = 1f).
-                    isForwardSlot = reverseDirection,
+                    // La bisagra siempre queda en el lomo central sin
+                    // importar hacia dónde se arrastre: esta es la mitad
+                    // izquierda, así que su lomo es su borde derecho. Puede
+                    // avanzar o retroceder según hacia dónde arrastres (no
+                    // está fijo por posición), para que siempre responda al
+                    // gesto sin importar la dirección.
                     pivotOverride = 1f,
                     pageOf = { group -> if (reverseDirection) group.getOrNull(1) else group.getOrNull(0) },
                     groups = groups,
@@ -188,7 +188,6 @@ private fun MangaPager(pages: List<PageSource>, isSpread: Boolean, reverseDirect
                     groupIndex = groupIndex,
                     onGroupChange = setGroupIndex,
                     reverseDirection = reverseDirection,
-                    isForwardSlot = !reverseDirection,
                     // Mitad derecha: su lomo es su borde izquierdo.
                     pivotOverride = 0f,
                     pageOf = { group -> if (reverseDirection) group.getOrNull(0) else group.getOrNull(1) },
@@ -222,9 +221,10 @@ private fun MangaPager(pages: List<PageSource>, isSpread: Boolean, reverseDirect
 }
 
 /**
- * Una sola mitad del spread, con su propio [PageCurlPager]: solo deja pasar
- * en el sentido que le corresponde ([isForwardSlot]), para que tocar un lado
- * del libro solo gire esa página y no las dos a la vez.
+ * Una sola mitad del spread, con su propio [PageCurlPager] independiente:
+ * así tocar/arrastrar un lado del libro solo gira esa página y no las dos a
+ * la vez. Puede avanzar o retroceder (no está restringida a un solo
+ * sentido): lo único fijo es dónde queda la bisagra ([pivotOverride]).
  */
 @Composable
 private fun SpreadSlot(
@@ -233,7 +233,6 @@ private fun SpreadSlot(
     groupIndex: Int,
     onGroupChange: (Int) -> Unit,
     reverseDirection: Boolean,
-    isForwardSlot: Boolean,
     pivotOverride: Float,
     pageOf: (List<PageSource>) -> PageSource?,
     groups: List<List<PageSource>>,
@@ -244,8 +243,6 @@ private fun SpreadSlot(
         onPageChange = onGroupChange,
         modifier = modifier,
         reverseDirection = reverseDirection,
-        allowForward = isForwardSlot,
-        allowBackward = !isForwardSlot,
         pivotOverride = pivotOverride,
         turningPageContent = { index ->
             PageImage(pageOf(groups.getOrNull(index).orEmpty()), Modifier.fillMaxSize(), zoomable = false)

@@ -5,10 +5,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.offset
-import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -21,33 +18,22 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.unit.IntOffset
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
-import kotlin.math.cos
-import kotlin.math.roundToInt
-
-private const val STRIP_COUNT = 12
+import kotlin.math.absoluteValue
 
 /**
- * Pager que simula una hoja de papel curvándose al pasar de página: la
- * franja que se va "despegando" se dibuja como varias tiras verticales que
- * se van comprimiendo de forma gradual (no de golpe), dando sensación de
- * curva en vez de una tapa dura girando. Se puede agarrar tocando cualquier
- * punto del lado izquierdo o derecho de la pantalla.
- *
- * A diferencia de un intento anterior con rotación 3D real (rotationY +
- * cámara en perspectiva), aquí solo se comprime el ANCHO (scaleX): la
- * perspectiva real encogía también el ALTO cerca de los 90°, dejando la
- * página chica y flotando en vez de ocupar toda la altura. Con solo scaleX
- * eso no puede pasar nunca.
+ * Pager con un giro de página al estilo revista: la hoja gira en 3D sobre su
+ * propio eje (como una tapa dura, no como papel flexible), en dos tramos
+ * — 0°→90° se ve la página actual achicándose por la perspectiva, 90°→180°
+ * aparece la página siguiente terminando el giro — y se puede agarrar
+ * tocando cualquier punto del lado izquierdo o derecho de la pantalla, no
+ * solo una esquina.
  */
 @Composable
 fun PageCurlPager(
@@ -79,12 +65,14 @@ fun PageCurlPager(
 ) {
     val turning = turningPageContent ?: pageContent
     val scope = rememberCoroutineScope()
-    val density = LocalDensity.current
 
     var widthPx by remember { mutableFloatStateOf(1f) }
     // +1 = avanzando a la siguiente página, -1 = volviendo a la anterior, 0 = en reposo.
     var direction by remember { mutableIntStateOf(0) }
-    // Evita que dos gestos disparen dos cambios de página casi a la vez.
+    // Evita que un toque y un arrastre (u otro toque) disparen dos cambios de
+    // página casi a la vez: eso dejaba el índice compartido por delante de
+    // lo que esta mitad creía mostrar, y la otra mitad del spread se quedaba
+    // en negro al no encontrar esa página.
     var committing by remember { mutableStateOf(false) }
 
     // t: 0 = plana, -1 = pasada del todo hacia la siguiente, +1 = pasada del
@@ -125,121 +113,48 @@ fun PageCurlPager(
         committing = false
     }
 
+    // Recorta todo lo que se dibuje dentro a los límites exactos de esta
+    // instancia: sin esto, una página rotando en 3D cerca de los 90° puede
+    // "derramarse" visualmente sobre la mitad vecina del spread.
     Box(modifier = modifier.fillMaxSize().clipToBounds()) {
         val value = t.value
-        val foldProgress = kotlin.math.abs(value).coerceIn(0f, 1f)
+        val signedAngle = value * 180f
 
-        if ((direction != 0 || value != 0f) && foldProgress > 0f) {
+        if (direction != 0 || value != 0f) {
             val forward = if (value != 0f) value < 0f else direction == 1
             val targetIndex = if (forward) currentPage + 1 else currentPage - 1
 
-            // Página de destino, a pantalla completa debajo de todo: se
-            // revela conforme la banda de arriba se va comprimiendo.
-            if (targetIndex in 0 until pageCount) {
-                Box(Modifier.fillMaxSize()) { turning(targetIndex) }
-            }
+            // Pivote: el que se fije explícitamente, o si no, el lado
+            // contrario al que se está pasando (la "costura").
+            val pivotFraction = pivotOverride ?: if (forward) 0f else 1f
 
-            // El pliegue avanza desde el borde fijado (o el contrario al
-            // sentido del giro) hacia el otro extremo, según cuánto se haya
-            // arrastrado. flatWidthPx = lo que de la página actual sigue
-            // totalmente plano; curlWidthPx = la banda que se está curvando.
-            val pivotAtStart = pivotOverride ?: if (forward) 0f else 1f
-            val curlWidthPx = widthPx * foldProgress
-            val flatWidthPx = widthPx - curlWidthPx
-
-            if (flatWidthPx > 0.5f) {
-                val flatStartPx = if (pivotAtStart == 0f) 0f else curlWidthPx
-                PageWindow(
-                    startPx = flatStartPx,
-                    widthPxSlice = flatWidthPx,
-                    fullWidthPx = widthPx,
-                    density = density,
+            if (signedAngle.absoluteValue <= 90f) {
+                // Primer tramo: debajo, a pantalla completa, la página de
+                // destino (se revela conforme la de arriba se ve de canto).
+                // Solo se dibuja en este tramo: en el segundo ya la cubre
+                // por completo la propia FlippingPage de abajo, y dibujarla
+                // dos veces a la vez se veía como una página duplicada.
+                if (targetIndex in 0 until pageCount) {
+                    Box(Modifier.fillMaxSize()) { turning(targetIndex) }
+                }
+                // Primer tramo: la página actual se va comprimiendo hacia
+                // el pliegue, de 0° (plana) a 90° (de canto).
+                FlippingPage(
+                    angleDegrees = signedAngle.absoluteValue,
+                    pivotFraction = pivotFraction,
                 ) {
                     turning(currentPage)
                 }
-            }
-
-            if (curlWidthPx > 0.5f) {
-                val curlStartPx = if (pivotAtStart == 0f) flatWidthPx else 0f
-                val sliceWidthPx = curlWidthPx / STRIP_COUNT
-
-                Box(Modifier.fillMaxSize()) {
-                    for (i in 0 until STRIP_COUNT) {
-                        // Tira 0 = pegada a la parte plana (casi sin
-                        // comprimir), tira N-1 = en la punta que se curva
-                        // (más comprimida), para que se vea como una curva
-                        // continua y no como un giro de golpe.
-                        // i=0 siempre queda pegada a la parte plana y i=N-1
-                        // siempre es la punta que se curva, sin importar de
-                        // qué lado esté el lomo (ya lo resuelve sliceStartPx
-                        // más abajo), así que esta relación no depende de
-                        // pivotAtStart.
-                        val u = (i + 0.5f) / STRIP_COUNT
-                        val scale = cos(Math.toRadians(u * 90.0)).toFloat().coerceAtLeast(0.04f)
-                        val shadeAlpha = u * 0.5f
-
-                        val sliceStartPx = curlStartPx + if (pivotAtStart == 0f) {
-                            i * sliceWidthPx
-                        } else {
-                            curlWidthPx - (i + 1) * sliceWidthPx
-                        }
-                        // Mantiene la tira pegada a su vecina ya comprimida,
-                        // anclando la compresión al lado más cercano al
-                        // pliegue en vez de al centro de la tira.
-                        val anchorAtRight = pivotAtStart != 0f
-
-                        Box(
-                            Modifier
-                                .fillMaxHeight()
-                                .width(with(density) { sliceWidthPx.toDp() })
-                                .offset(x = with(density) { sliceStartPx.toDp() })
-                                .graphicsLayer {
-                                    scaleX = scale
-                                    transformOrigin = TransformOrigin(if (anchorAtRight) 1f else 0f, 0.5f)
-                                }
-                                .drawWithContent {
-                                    drawContent()
-                                    if (shadeAlpha > 0f) {
-                                        drawRect(Color.Black.copy(alpha = shadeAlpha))
-                                    }
-                                },
-                        ) {
-                            Box(
-                                Modifier
-                                    .fillMaxHeight()
-                                    .width(with(density) { widthPx.toDp() })
-                                    .offset { IntOffset(-sliceStartPx.roundToInt(), 0) },
-                            ) {
-                                turning(currentPage)
-                            }
-                        }
-                    }
+            } else if (targetIndex in 0 until pageCount) {
+                // Segundo tramo: ya pasó los 90°, la siguiente/anterior
+                // página se va destapando de 90° (de canto) a 0° (plana).
+                val remaining = if (forward) signedAngle + 180f else signedAngle - 180f
+                FlippingPage(
+                    angleDegrees = remaining.absoluteValue,
+                    pivotFraction = pivotFraction,
+                ) {
+                    turning(targetIndex)
                 }
-
-                // Sombra suave de la hoja que se curva sobre la página de
-                // debajo, justo en el borde que se está despegando.
-                val shadowWidthPx = (widthPx * 0.05f).coerceAtMost(curlWidthPx)
-                val shadowStartPx = if (pivotAtStart == 0f) {
-                    curlStartPx + curlWidthPx - shadowWidthPx
-                } else {
-                    curlStartPx
-                }
-                Box(
-                    Modifier
-                        .fillMaxHeight()
-                        .width(with(density) { shadowWidthPx.toDp() })
-                        .offset(x = with(density) { shadowStartPx.toDp() })
-                        .drawWithContent {
-                            val brush = Brush.horizontalGradient(
-                                colors = if (pivotAtStart == 0f) {
-                                    listOf(Color.Transparent, Color.Black.copy(alpha = 0.3f))
-                                } else {
-                                    listOf(Color.Black.copy(alpha = 0.3f), Color.Transparent)
-                                },
-                            )
-                            drawRect(brush)
-                        },
-                )
             }
         } else {
             // En reposo: una sola instancia normal (permite pellizcar/zoom).
@@ -317,30 +232,42 @@ fun PageCurlPager(
     }
 }
 
-/** Recorta un trozo horizontal (ventana) del contenido completo de una
- *  página, mostrando solo [startPx, startPx+widthPxSlice). */
+/**
+ * Una página comprimiéndose horizontalmente hacia [pivotFraction] (0°=plana,
+ * 90°=de canto/invisible), con sombreado según cuánto se haya girado para
+ * dar sensación de volumen.
+ *
+ * Se usa compresión de ancho (scaleX) en vez de una rotación 3D real con
+ * cámara en perspectiva: esa rotación también encogía el ALTO de la página
+ * a medida que se acercaba a los 90° (la proyección en perspectiva hace que
+ * las partes más alejadas del pivote se vean más chicas en ambos ejes, no
+ * solo más angostas), dejando la página pequeña y flotando en medio de la
+ * pantalla en vez de ocupar toda la altura. Comprimir solo el ancho
+ * garantiza que la altura nunca cambie.
+ */
 @Composable
-private fun PageWindow(
-    startPx: Float,
-    widthPxSlice: Float,
-    fullWidthPx: Float,
-    density: androidx.compose.ui.unit.Density,
+private fun FlippingPage(
+    angleDegrees: Float,
+    pivotFraction: Float,
     content: @Composable () -> Unit,
 ) {
+    val clampedAngle = angleDegrees.coerceIn(0f, 90f)
+    val scale = kotlin.math.cos(Math.toRadians(clampedAngle.toDouble())).toFloat().coerceAtLeast(0.02f)
+    val shadeAlpha = (clampedAngle / 90f) * 0.45f
     Box(
         Modifier
-            .fillMaxHeight()
-            .width(with(density) { widthPxSlice.toDp() })
-            .offset(x = with(density) { startPx.toDp() })
-            .clipToBounds(),
+            .fillMaxSize()
+            .graphicsLayer {
+                scaleX = scale
+                transformOrigin = TransformOrigin(pivotFraction, 0.5f)
+            }
+            .drawWithContent {
+                drawContent()
+                if (shadeAlpha > 0f) {
+                    drawRect(Color.Black.copy(alpha = shadeAlpha))
+                }
+            },
     ) {
-        Box(
-            Modifier
-                .fillMaxHeight()
-                .width(with(density) { fullWidthPx.toDp() })
-                .offset { IntOffset(-startPx.roundToInt(), 0) },
-        ) {
-            content()
-        }
+        content()
     }
 }
