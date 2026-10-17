@@ -23,7 +23,6 @@ import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.platform.LocalDensity
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlin.math.absoluteValue
@@ -66,7 +65,6 @@ fun PageCurlPager(
 ) {
     val turning = turningPageContent ?: pageContent
     val scope = rememberCoroutineScope()
-    val density = LocalDensity.current
 
     var widthPx by remember { mutableFloatStateOf(1f) }
     // +1 = avanzando a la siguiente página, -1 = volviendo a la anterior, 0 = en reposo.
@@ -139,26 +137,21 @@ fun PageCurlPager(
                 if (targetIndex in 0 until pageCount) {
                     Box(Modifier.fillMaxSize()) { turning(targetIndex) }
                 }
-                // Primer tramo: la página actual gira mostrando su frente.
+                // Primer tramo: la página actual se va comprimiendo hacia
+                // el pliegue, de 0° (plana) a 90° (de canto).
                 FlippingPage(
-                    rotationY = signedAngle,
+                    angleDegrees = signedAngle.absoluteValue,
                     pivotFraction = pivotFraction,
-                    density = density,
                 ) {
                     turning(currentPage)
                 }
             } else if (targetIndex in 0 until pageCount) {
-                // Segundo tramo: ya pasó los 90°, termina de girar la
-                // página siguiente/anterior hasta quedar plana. (+180/-180
-                // es una vuelta completa, así que el ángulo visual es el
-                // mismo que signedAngle∓180 — da igual cuál de los dos
-                // signos se use aquí, por eso cualquiera de las dos ramas
-                // sirve para ambos sentidos.)
+                // Segundo tramo: ya pasó los 90°, la siguiente/anterior
+                // página se va destapando de 90° (de canto) a 0° (plana).
                 val remaining = if (forward) signedAngle + 180f else signedAngle - 180f
                 FlippingPage(
-                    rotationY = remaining,
+                    angleDegrees = remaining.absoluteValue,
                     pivotFraction = pivotFraction,
-                    density = density,
                 ) {
                     turning(targetIndex)
                 }
@@ -239,28 +232,34 @@ fun PageCurlPager(
     }
 }
 
-/** Una página plana girando en 3D sobre [pivotFraction], con sombreado según
- *  cuánto se haya girado para dar sensación de volumen. */
+/**
+ * Una página comprimiéndose horizontalmente hacia [pivotFraction] (0°=plana,
+ * 90°=de canto/invisible), con sombreado según cuánto se haya girado para
+ * dar sensación de volumen.
+ *
+ * Se usa compresión de ancho (scaleX) en vez de una rotación 3D real con
+ * cámara en perspectiva: esa rotación también encogía el ALTO de la página
+ * a medida que se acercaba a los 90° (la proyección en perspectiva hace que
+ * las partes más alejadas del pivote se vean más chicas en ambos ejes, no
+ * solo más angostas), dejando la página pequeña y flotando en medio de la
+ * pantalla en vez de ocupar toda la altura. Comprimir solo el ancho
+ * garantiza que la altura nunca cambie.
+ */
 @Composable
 private fun FlippingPage(
-    rotationY: Float,
+    angleDegrees: Float,
     pivotFraction: Float,
-    density: androidx.compose.ui.unit.Density,
     content: @Composable () -> Unit,
 ) {
-    val shadeAlpha = (rotationY.absoluteValue / 90f).coerceIn(0f, 1f) * 0.45f
+    val clampedAngle = angleDegrees.coerceIn(0f, 90f)
+    val scale = kotlin.math.cos(Math.toRadians(clampedAngle.toDouble())).toFloat().coerceAtLeast(0.02f)
+    val shadeAlpha = (clampedAngle / 90f) * 0.45f
     Box(
         Modifier
             .fillMaxSize()
             .graphicsLayer {
-                // Una distancia de cámara chica exagera muchísimo la
-                // perspectiva y puede verse distorsionado/roto justo cerca
-                // de los 90°; con un valor más generoso el giro se ve
-                // sólido en todo el recorrido.
-                cameraDistance = 48f * density.density
-                this.rotationY = rotationY
+                scaleX = scale
                 transformOrigin = TransformOrigin(pivotFraction, 0.5f)
-                clip = true
             }
             .drawWithContent {
                 drawContent()
