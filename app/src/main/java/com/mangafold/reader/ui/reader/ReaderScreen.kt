@@ -155,6 +155,10 @@ private fun MangaPager(pages: List<PageSource>, isSpread: Boolean, reverseDirect
     }
     var groupIndex by remember(groups) { mutableIntStateOf(0) }
     val groupCount = groups.size
+    // Nunca dejar que un índice fuera de rango llegue a pintarse (p. ej. por
+    // dos avances casi simultáneos): mejor quedarse en el límite que mostrar
+    // una mitad del spread en negro por no encontrar esa página.
+    val setGroupIndex: (Int) -> Unit = { groupIndex = it.coerceIn(0, (groupCount - 1).coerceAtLeast(0)) }
 
     Box(Modifier.fillMaxSize()) {
         if (isSpread) {
@@ -166,7 +170,7 @@ private fun MangaPager(pages: List<PageSource>, isSpread: Boolean, reverseDirect
                     modifier = Modifier.weight(1f).fillMaxHeight(),
                     groupCount = groupCount,
                     groupIndex = groupIndex,
-                    onGroupChange = { groupIndex = it },
+                    onGroupChange = setGroupIndex,
                     reverseDirection = reverseDirection,
                     // Sin invertir: el lado derecho avanza. Invertido (manga):
                     // el lado izquierdo avanza. La bisagra, en cambio, siempre
@@ -182,7 +186,7 @@ private fun MangaPager(pages: List<PageSource>, isSpread: Boolean, reverseDirect
                     modifier = Modifier.weight(1f).fillMaxHeight(),
                     groupCount = groupCount,
                     groupIndex = groupIndex,
-                    onGroupChange = { groupIndex = it },
+                    onGroupChange = setGroupIndex,
                     reverseDirection = reverseDirection,
                     isForwardSlot = !reverseDirection,
                     // Mitad derecha: su lomo es su borde izquierdo.
@@ -195,7 +199,7 @@ private fun MangaPager(pages: List<PageSource>, isSpread: Boolean, reverseDirect
             PageCurlPager(
                 pageCount = groupCount,
                 currentPage = groupIndex,
-                onPageChange = { groupIndex = it },
+                onPageChange = setGroupIndex,
                 modifier = Modifier.fillMaxSize(),
                 reverseDirection = reverseDirection,
                 turningPageContent = { index ->

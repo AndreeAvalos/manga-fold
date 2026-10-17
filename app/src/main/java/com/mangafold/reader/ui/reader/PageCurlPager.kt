@@ -10,6 +10,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -69,12 +70,19 @@ fun PageCurlPager(
     var widthPx by remember { mutableFloatStateOf(1f) }
     // +1 = avanzando a la siguiente página, -1 = volviendo a la anterior, 0 = en reposo.
     var direction by remember { mutableIntStateOf(0) }
+    // Evita que un toque y un arrastre (u otro toque) disparen dos cambios de
+    // página casi a la vez: eso dejaba el índice compartido por delante de
+    // lo que esta mitad creía mostrar, y la otra mitad del spread se quedaba
+    // en negro al no encontrar esa página.
+    var committing by remember { mutableStateOf(false) }
 
     // t: 0 = plana, -1 = pasada del todo hacia la siguiente, +1 = pasada del
     // todo hacia la anterior. Única fuente de verdad del render.
     val t = remember { Animatable(0f) }
 
     suspend fun settle() {
+        if (committing) return
+        committing = true
         val value = t.value
         when {
             value <= -0.5f && currentPage < pageCount - 1 -> {
@@ -90,16 +98,20 @@ fun PageCurlPager(
             else -> t.animateTo(0f, tween(200))
         }
         direction = 0
+        committing = false
     }
 
     suspend fun animatedTurn(forward: Boolean) {
+        if (committing) return
         if ((forward && currentPage >= pageCount - 1) || (!forward && currentPage <= 0)) return
+        committing = true
         direction = if (forward) 1 else -1
         t.snapTo(0f)
         t.animateTo(if (forward) -1f else 1f, tween(280))
         onPageChange(if (forward) currentPage + 1 else currentPage - 1)
         t.snapTo(0f)
         direction = 0
+        committing = false
     }
 
     Box(modifier = modifier.fillMaxSize()) {
@@ -178,6 +190,7 @@ fun PageCurlPager(
                         launch {
                             detectHorizontalDragGestures(
                                 onDragStart = { offset: Offset ->
+                                    if (committing) return@detectHorizontalDragGestures
                                     direction = when {
                                         allowForward && !allowBackward -> if (currentPage < pageCount - 1) 1 else 0
                                         allowBackward && !allowForward -> if (currentPage > 0) -1 else 0
