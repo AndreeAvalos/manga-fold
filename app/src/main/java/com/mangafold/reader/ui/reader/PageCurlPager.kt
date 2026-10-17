@@ -17,7 +17,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawWithContent
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
@@ -190,20 +189,14 @@ fun PageCurlPager(
                         }
                         launch {
                             detectHorizontalDragGestures(
-                                onDragStart = { offset: Offset ->
+                                onDragStart = {
                                     if (committing) return@detectHorizontalDragGestures
+                                    // Si esta mitad solo deja pasar en un sentido, ya se sabe
+                                    // cuál es sin esperar a ver hacia dónde se mueve el dedo.
                                     direction = when {
                                         allowForward && !allowBackward -> if (currentPage < pageCount - 1) 1 else 0
                                         allowBackward && !allowForward -> if (currentPage > 0) -1 else 0
-                                        else -> {
-                                            val startFraction = (offset.x / widthPx).coerceIn(0f, 1f)
-                                            val wantsForward = if (reverseDirection) startFraction < 0.5f else startFraction >= 0.5f
-                                            when {
-                                                wantsForward && currentPage < pageCount - 1 -> 1
-                                                !wantsForward && currentPage > 0 -> -1
-                                                else -> 0
-                                            }
-                                        }
+                                        else -> 0 // se decide en el primer movimiento (ver más abajo)
                                     }
                                 },
                                 onDragEnd = {
@@ -215,7 +208,19 @@ fun PageCurlPager(
                                     scope.launch { settle() }
                                 },
                                 onHorizontalDrag = { change, dragAmount ->
-                                    if (direction == 0 || widthPx <= 0f) return@detectHorizontalDragGestures
+                                    if (widthPx <= 0f) return@detectHorizontalDragGestures
+                                    if (direction == 0) {
+                                        // La dirección la decide hacia dónde se mueve el dedo,
+                                        // no dónde empezó a tocar: así responde igual sin
+                                        // importar el punto exacto de la mitad donde agarres.
+                                        if (committing || dragAmount == 0f) return@detectHorizontalDragGestures
+                                        val wantsForward = if (reverseDirection) dragAmount > 0f else dragAmount < 0f
+                                        direction = when {
+                                            wantsForward && currentPage < pageCount - 1 -> 1
+                                            !wantsForward && currentPage > 0 -> -1
+                                            else -> return@detectHorizontalDragGestures
+                                        }
+                                    }
                                     change.consume()
                                     val delta = dragAmount / widthPx
                                     val minT = if (direction == 1) -1f else 0f
