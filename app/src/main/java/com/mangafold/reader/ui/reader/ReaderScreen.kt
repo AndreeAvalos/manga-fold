@@ -158,7 +158,11 @@ private fun MangaPager(pages: List<PageSource>, isSpread: Boolean, reverseDirect
     // Nunca dejar que un índice fuera de rango llegue a pintarse (p. ej. por
     // dos avances casi simultáneos): mejor quedarse en el límite que mostrar
     // una mitad del spread en negro por no encontrar esa página.
-    val setGroupIndex: (Int) -> Unit = { groupIndex = it.coerceIn(0, (groupCount - 1).coerceAtLeast(0)) }
+    val setGroupIndex: (Int) -> Unit = {
+        val clamped = it.coerceIn(0, (groupCount - 1).coerceAtLeast(0))
+        android.util.Log.d("PageCurl", "[SHARED] groupIndex $groupIndex -> $clamped (requested $it, groupCount=$groupCount)")
+        groupIndex = clamped
+    }
 
     Box(Modifier.fillMaxSize()) {
         if (isSpread) {
@@ -179,6 +183,7 @@ private fun MangaPager(pages: List<PageSource>, isSpread: Boolean, reverseDirect
                     // borde derecho (pivotOverride = 1f).
                     isForwardSlot = reverseDirection,
                     pivotOverride = 1f,
+                    debugTag = "LEFT",
                     pageOf = { group -> if (reverseDirection) group.getOrNull(1) else group.getOrNull(0) },
                     groups = groups,
                 )
@@ -191,6 +196,7 @@ private fun MangaPager(pages: List<PageSource>, isSpread: Boolean, reverseDirect
                     isForwardSlot = !reverseDirection,
                     // Mitad derecha: su lomo es su borde izquierdo.
                     pivotOverride = 0f,
+                    debugTag = "RIGHT",
                     pageOf = { group -> if (reverseDirection) group.getOrNull(0) else group.getOrNull(1) },
                     groups = groups,
                 )
@@ -235,6 +241,7 @@ private fun SpreadSlot(
     reverseDirection: Boolean,
     isForwardSlot: Boolean,
     pivotOverride: Float,
+    debugTag: String,
     pageOf: (List<PageSource>) -> PageSource?,
     groups: List<List<PageSource>>,
 ) {
@@ -247,6 +254,7 @@ private fun SpreadSlot(
         allowForward = isForwardSlot,
         allowBackward = !isForwardSlot,
         pivotOverride = pivotOverride,
+        debugTag = debugTag,
         turningPageContent = { index ->
             PageImage(pageOf(groups.getOrNull(index).orEmpty()), Modifier.fillMaxSize(), zoomable = false)
         },
